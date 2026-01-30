@@ -4,17 +4,9 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        // Use 8.2.2 for better stability with newer Gradle
         classpath "com.android.tools.build:gradle:8.2.2"
-        // Update Kotlin to 1.9.22 to support newer Gradle APIs
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22"
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven { url 'https://jitpack.io' }
-    }
-}
+// REMOVED the allprojects block from here because it's now in settings.gradle
