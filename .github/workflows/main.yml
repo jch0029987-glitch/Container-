@@ -1,0 +1,32 @@
+name: Build vPhone Clone
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Download Prebuilts
+        run: |
+          # Get PRoot for the engine
+          curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
+          # Get a tiny OS image
+          curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: vPhone-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
