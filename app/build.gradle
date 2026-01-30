@@ -24,6 +24,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
 }
 
 dependencies {
@@ -31,9 +34,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.10.0'
     
-    // VNC Library for the virtual screen (Bridge to Guest OS)
-    // Note: Use 'master-SNAPSHOT' if v1.5.0 isn't resolving, 
-    // but usually v1.5.0 works on JitPack.
-    implementation 'com.github.iiordanov:remote-desktop-clients:v1.5.0'
+    // The working VNC library
+    implementation 'com.github.antlersoft:android-vnc-viewer:v0.5.0'
 }
-

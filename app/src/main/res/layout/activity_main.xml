@@ -4,17 +4,16 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <com.antlersoft.android.bc.RemoteCanvas
+        android:id="@+id/vnc_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <TextView
         android:id="@+id/status_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="vPhone OS Booting..."
-        android:textColor="#00FF00"
-        android:layout_centerInParent="true"/>
-
-    <SurfaceView
-        android:id="@+id/os_display"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
+        android:layout_centerInParent="true"
+        android:text="Booting vPhone..."
+        android:textColor="#00FF00" />
 </RelativeLayout>
