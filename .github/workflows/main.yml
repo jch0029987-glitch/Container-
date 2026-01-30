@@ -7,26 +7,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v3
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
-      - name: Download Prebuilts
+      - name: Create Assets Directories
         run: |
-          # Get PRoot for the engine
+          # Create the path so curl doesn't fail
+          mkdir -p app/src/main/assets/bin
+
+      - name: Download Engine and OS Image
+        run: |
+          # Download PRoot (The Virtualization Engine)
           curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
-          # Get a tiny OS image
+          
+          # Download Alpine Mini Rootfs (The Guest OS Filesystem)
           curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
+          
+          # Verify files exist for the build
+          ls -R app/src/main/assets/
 
-      - name: Build APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
 
-      - name: Upload result
+      - name: Build with Gradle
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vPhone-APK
+          name: vPhone-Clone-Build
           path: app/build/outputs/apk/debug/app-debug.apk
