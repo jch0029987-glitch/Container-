@@ -42,12 +42,13 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
             consoleLayout.visibility = if (consoleLayout.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
 
-        // Terminal Input Logic
+        // Terminal Input Logic with Fixed Reference
         cmdInput.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 val cmd = v.text.toString()
                 executeLinux(cmd)
-                v.text.clear()
+                // Explicitly cast to EditText and use setText to avoid StringBuilder ambiguity
+                (v as EditText).setText("")
                 true
             } else false
         }
@@ -163,7 +164,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 if (File(fbPath).exists()) {
                     renderFrame(holder.surface, fbPath)
                 }
-                Thread.sleep(16) // ~60 FPS Target
+                Thread.sleep(16) 
             }
         }.start()
     }
