@@ -1,26 +1,29 @@
 #include <jni.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
-#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_vphone_clone_MainActivity_renderFrame(JNIEnv* env, jobject obj, jobject surface, jintArray pixels, jint width, jint height) {
-    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
-    if (!window) return;
-
-    ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBA_8888);
-    ANativeWindow_Buffer buffer;
-    
-    if (ANativeWindow_lock(window, &buffer, nullptr) == 0) {
-        jint* data = env->GetIntArrayElements(pixels, nullptr);
-        uint32_t* dest = (uint32_t*)buffer.bits;
-        
-        for (int y = 0; y < height; y++) {
-            memcpy(dest + (y * buffer.stride), data + (y * width), width * 4);
-        }
-
-        env->ReleaseIntArrayElements(pixels, data, JNI_ABORT);
-        ANativeWindow_unlockAndPost(window);
+Java_com_vphone_clone_MainActivity_renderFrame(JNIEnv* env, jobject obj, jobject surface, jstring fbPath) {
+    const char* path = env->GetStringUTFChars(fbPath, nullptr);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        env->ReleaseStringUTFChars(fbPath, path);
+        return;
     }
-    ANativeWindow_release(window);
+
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    if (window) {
+        ANativeWindow_Buffer buffer;
+        if (ANativeWindow_lock(window, &buffer, nullptr) == 0) {
+            // Read direct from Phosh virtual display
+            read(fd, buffer.bits, buffer.width * buffer.height * 4);
+            ANativeWindow_unlockAndPost(window);
+        }
+        ANativeWindow_release(window);
+    }
+    close(fd);
+    env->ReleaseStringUTFChars(fbPath, path);
 }

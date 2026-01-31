@@ -1,19 +1,47 @@
-<?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <com.antlersoft.android.bc.RemoteCanvas
-        android:id="@+id/vnc_view"
+    <SurfaceView
+        android:id="@+id/phoshSurface"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <TextView
-        android:id="@+id/status_text"
+    <LinearLayout
+        android:id="@+id/terminalConsole"
+        android:layout_width="match_parent"
+        android:layout_height="250dp"
+        android:layout_gravity="bottom"
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:visibility="gone">
+        
+        <TextView
+            android:id="@+id/logView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:textColor="#00FF00"
+            android:padding="5dp"
+            android:scrollbars="vertical"
+            android:fontFamily="monospace" />
+
+        <EditText
+            android:id="@+id/cmdInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#333333"
+            android:textColor="#FFFFFF"
+            android:imeOptions="actionSend"
+            android:inputType="text" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnToggle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
-        android:text="Booting vPhone..."
-        android:textColor="#00FF00" />
-</RelativeLayout>
+        android:layout_gravity="top|right"
+        android:text="Console"
+        android:alpha="0.5" />
+</FrameLayout>

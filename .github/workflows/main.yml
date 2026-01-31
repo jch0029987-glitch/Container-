@@ -1,4 +1,4 @@
-name: Build vPhone Clone
+name: Build vPhone Phosh OS
 on: [push]
 
 jobs:
@@ -12,29 +12,32 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27 # Using the new 2026 standard NDK
-          link-to-sdk: true
-
-      - name: Create Assets Directories
-        run: mkdir -p app/src/main/assets/bin
-
-      - name: Download Engine
+      - name: Prepare Assets (OS & Engine)
         run: |
+          # 1. Create directory structure in assets
+          mkdir -p app/src/main/assets/bin
+          
+          # 2. Download the PRoot engine (Android AArch64 build)
+          # We rename it to 'proot' so the Java code finds it easily
           curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
-          curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
+          
+          # 3. Download the Official Alpine Linux Rootfs (ARM 64-bit)
+          # We name it exactly 'rootfs.tar.gz' for the Manager logic
+          curl -L https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.23.2-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
+          
+          # 4. Verify downloads
+          ls -R app/src/main/assets/
 
-      - name: Build APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      - name: Upload APK
+      - name: Build with Gradle
+        # This compiles the C++ code (CMake) and the Java code into the APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload Finished APK
         uses: actions/upload-artifact@v4
         with:
-          name: vPhone-Native-Alpha
+          name: vPhone-Phosh-Edition
           path: app/build/outputs/apk/debug/app-debug.apk
