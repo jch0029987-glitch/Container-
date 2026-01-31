@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project("vphone-engine")
+add_library(vphone-engine SHARED native-lib.cpp)
+find_library(log-lib log)
+find_library(android-lib android)
+target_link_libraries(vphone-engine ${log-lib} ${android-lib})

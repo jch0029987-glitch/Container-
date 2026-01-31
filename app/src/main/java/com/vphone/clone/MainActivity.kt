@@ -1,93 +1,68 @@
 package com.vphone.clone
 
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.widget.TextView
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.appcompat.app.AppCompatActivity
-import com.antlersoft.android.bc.RemoteCanvas
-import java.io.File
-import java.io.FileOutputStream
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
-    private lateinit var vncCanvas: RemoteCanvas
-    private lateinit var statusText: TextView
+    // 1. Load the C++ Engine
+    companion object {
+        init {
+            System.loadLibrary("vphone-engine")
+        }
+    }
+
+    // 2. The link to your C++ code
+    private external fun renderFrame(
+        surface: Surface, 
+        pixels: IntArray, 
+        width: Int, 
+        height: Int
+    )
+
+    private var isRunning = false
+    private var renderThread: Thread? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        vncCanvas = findViewById(R.id.vnc_view)
-        statusText = findViewById(R.id.status_text)
-
-        // Run the boot sequence
-        bootSequence()
-    }
-
-    private fun bootSequence() {
-        Thread {
-            try {
-                // 1. Prepare files
-                updateStatus("Setting up environment...")
-                prepareBinaries()
-
-                // 2. Start the Virtual Engine
-                updateStatus("Starting Virtual Engine...")
-                startEngine()
-
-                // 3. Connect the Screen (Delay allows server to warm up)
-                Handler(Looper.getMainLooper()).postDelayed({
-                    updateStatus("Connecting Display...")
-                    try {
-                        // Standard VNC port for display :1 is 5901
-                        vncCanvas.connect("127.0.0.1", 5901, "vphone_pass")
-                        statusText.text = "" // Clear text on success
-                    } catch (e: Exception) {
-                        updateStatus("Display Error: ${e.message}")
-                    }
-                }, 4000)
-
-            } catch (e: Exception) {
-                updateStatus("Boot Failed: ${e.message}")
-            }
-        }.start()
-    }
-
-    private fun prepareBinaries() {
-        val binDir = File(filesDir, "bin")
-        if (!binDir.exists()) binDir.mkdirs()
-
-        // Copy proot from assets to internal storage so it can be executed
-        val prootFile = File(binDir, "proot")
-        assets.open("bin/proot").use { input ->
-            FileOutputStream(prootFile).use { output ->
-                input.copyTo(output)
-            }
-        }
-        prootFile.setExecutable(true)
-    }
-
-    private fun startEngine() {
-        val prootPath = File(filesDir, "bin/proot").absolutePath
-        val guestPath = File(filesDir, "guest").absolutePath
         
-        // Basic PRoot command to start the guest environment
-        val pb = ProcessBuilder(
-            prootPath,
-            "-r", guestPath,
-            "-0", // Fake root
-            "-b", "/dev",
-            "-b", "/proc",
-            "/usr/bin/vncserver", ":1"
-        )
-        pb.directory(filesDir)
-        pb.start()
+        // Use a SurfaceView for direct-to-GPU performance
+        val surfaceView = SurfaceView(this)
+        setContentView(surfaceView)
+        surfaceView.holder.addCallback(this)
     }
 
-    private fun updateStatus(text: String) {
-        Handler(Looper.getMainLooper()).post {
-            statusText.text = text
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        isRunning = true
+        
+        // Define our "Video Card" resolution
+        val width = 1080
+        val height = 1920
+        
+        // This array holds the pixels. 
+        // 0xFF00FF00 is Green (Alpha, Red, Green, Blue)
+        val pixels = IntArray(width * height) { 0xFF00FF00.toInt() }
+
+        // 3. The Render Loop
+        renderThread = Thread {
+            while (isRunning) {
+                // Push the pixels to the C++ engine
+                renderFrame(holder.surface, pixels, width, height)
+                
+                // Keep it at roughly 60 FPS
+                Thread.sleep(16)
+            }
         }
+        renderThread?.start()
+    }
+
+    override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, h2: Int) {}
+
+    override fun surfaceDestroyed(h: SurfaceHolder) {
+        isRunning = false
+        renderThread?.join()
     }
 }

@@ -14,30 +14,27 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27 # Using the new 2026 standard NDK
+          link-to-sdk: true
+
       - name: Create Assets Directories
-        run: |
-          # Create the path so curl doesn't fail
-          mkdir -p app/src/main/assets/bin
+        run: mkdir -p app/src/main/assets/bin
 
-      - name: Download Engine and OS Image
+      - name: Download Engine
         run: |
-          # Download PRoot (The Virtualization Engine)
           curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
-          
-          # Download Alpine Mini Rootfs (The Guest OS Filesystem)
           curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
-          
-          # Verify files exist for the build
-          ls -R app/src/main/assets/
 
-      - name: Grant Execute Permission to Gradlew
-        run: chmod +x gradlew
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: vPhone-Clone-Build
+          name: vPhone-Native-Alpha
           path: app/build/outputs/apk/debug/app-debug.apk
