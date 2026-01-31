@@ -15,35 +15,61 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
+    // C++ Bridge Functions
     private external fun renderFrame(surface: Surface, fbPath: String)
+    private external fun sendTouchEvent(x: Int, y: Int, action: Int)
     
     private var isRunning = false
     private var linuxWriter: BufferedWriter? = null
     private lateinit var logView: TextView
+    private lateinit var consoleLayout: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Initialize UI Components
         logView = findViewById(R.id.logView)
+        consoleLayout = findViewById(R.id.terminalConsole)
         val surfaceView = findViewById<SurfaceView>(R.id.phoshSurface)
         surfaceView.holder.addCallback(this)
 
-        val console = findViewById<LinearLayout>(R.id.terminalConsole)
-        findViewById<Button>(R.id.btnToggle).setOnClickListener {
-            console.visibility = if (console.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        val btnToggle = findViewById<Button>(R.id.btnToggle)
+        val cmdInput = findViewById<EditText>(R.id.cmdInput)
+
+        // Toggle Terminal Visibility
+        btnToggle.setOnClickListener {
+            consoleLayout.visibility = if (consoleLayout.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
 
-        findViewById<EditText>(R.id.cmdInput).setOnEditorActionListener { v, actionId, _ ->
+        // Terminal Input Logic
+        cmdInput.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
-                executeLinux(v.text.toString())
+                val cmd = v.text.toString()
+                executeLinux(cmd)
                 v.text.clear()
                 true
             } else false
         }
 
-        // Start the lifecycle: Extract -> Boot -> Render
+        // Start the OS Management Lifecycle
         initOS()
+    }
+
+    // Capture Android Touch and Send to Linux
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val x = event.x.toInt()
+        val y = event.y.toInt()
+        val action = when (event.action) {
+            MotionEvent.ACTION_DOWN -> 0
+            MotionEvent.ACTION_MOVE -> 1
+            MotionEvent.ACTION_UP -> 2
+            else -> -1
+        }
+        if (action != -1) {
+            sendTouchEvent(x, y, action)
+        }
+        return true
     }
 
     private fun initOS() {
@@ -53,36 +79,35 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         Thread {
             try {
-                // 1. Extract PRoot Engine
+                // 1. Extract PRoot Engine if missing
                 if (!prootBin.exists()) {
                     updateStatus("Extracting PRoot engine...")
-                    assets.open("bin/proot").use { inp ->
+                    this@MainActivity.assets.open("bin/proot").use { inp ->
                         prootBin.outputStream().use { out -> inp.copyTo(out) }
                     }
                     prootBin.setExecutable(true)
                 }
 
-                // 2. Extract Rootfs Manager
+                // 2. Extract Rootfs if missing
                 if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
                     rootfsDir.mkdirs()
                     updateStatus("Extracting Linux Rootfs (First run only)...")
                     
                     val tarFile = File(filesDir, "rootfs.tar.gz")
-                    assets.open("rootfs.tar.gz").use { inp ->
+                    this@MainActivity.assets.open("rootfs.tar.gz").use { inp ->
                         tarFile.outputStream().use { out -> inp.copyTo(out) }
                     }
 
-                    // Use Android's native tar to unpack
                     val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${rootfsDir.absolutePath}")
                     process.waitFor()
                     tarFile.delete()
                 }
 
-                updateStatus("OS Ready. Initializing Phosh...")
+                updateStatus("OS Files Ready. Booting Phosh...")
                 bootLinux()
 
             } catch (e: Exception) {
-                updateStatus("Error: ${e.message}")
+                updateStatus("System Error: ${e.message}")
             }
         }.start()
     }
@@ -91,16 +116,16 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val proot = File(filesDir, "bin/proot").absolutePath
         val guest = File(filesDir, "rootfs").absolutePath
         
-        // Automated boot script: Updates, Installs Phosh, Starts Display
+        // Automated Boot Command: Installs required tools and starts Phosh
         val bootCmd = "$proot -r $guest -0 -b /dev -b /proc -b /sys /bin/sh -c " +
-                      "\"apk update && apk add phosh xvfb; " +
+                      "\"apk update && apk add phosh xvfb xdotool; " +
                       "Xvfb :1 -screen 0 1080x1920x32 -fbdir /tmp & " +
                       "export DISPLAY=:1; phosh\""
 
         val process = Runtime.getRuntime().exec(bootCmd)
         linuxWriter = process.outputStream.bufferedWriter()
 
-        // Stream Linux output to our logView
+        // Read and Display Linux System Logs
         Thread {
             val reader = process.inputStream.bufferedReader()
             var line: String?
@@ -113,7 +138,6 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun updateStatus(text: String) {
         runOnUiThread {
             logView.append("\n$text")
-            // Auto-scroll to bottom
             val scroll = logView.parent as? ScrollView
             scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
         }
@@ -125,7 +149,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 linuxWriter?.write("$cmd\n")
                 linuxWriter?.flush()
             } catch (e: Exception) {
-                updateStatus("Write Error: ${e.message}")
+                updateStatus("Terminal Error: ${e.message}")
             }
         }.start()
     }
@@ -136,15 +160,17 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         
         Thread {
             while (isRunning) {
-                // If the framebuffer file exists, render it
                 if (File(fbPath).exists()) {
                     renderFrame(holder.surface, fbPath)
                 }
-                Thread.sleep(16) // ~60fps
+                Thread.sleep(16) // ~60 FPS Target
             }
         }.start()
     }
 
-    override fun surfaceDestroyed(h: SurfaceHolder) { isRunning = false }
+    override fun surfaceDestroyed(h: SurfaceHolder) {
+        isRunning = false
+    }
+
     override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, h2: Int) {}
 }
