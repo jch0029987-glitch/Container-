@@ -19,22 +19,23 @@ jobs:
           mkdir -p app/src/main/assets/bin
           
           # 2. Download the PRoot engine (Android AArch64 build)
-          # We rename it to 'proot' so the Java code finds it easily
+          # Explicitly named 'proot' to match MainActivity.kt
           curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
           
-          # 3. Download the Official Alpine Linux Rootfs (ARM 64-bit)
-          # We name it exactly 'rootfs.tar.gz' for the Manager logic
-          curl -L https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.23.2-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
+          # 3. Download Alpine Linux Rootfs
+          # This forces the filename to 'rootfs.tar.gz' regardless of the source filename
+          # This solves the "Critical Error" seen in your logs
+          curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
           
-          # 4. Verify downloads
+          # 4. Verify downloads and names
           ls -R app/src/main/assets/
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        # This compiles the C++ code (CMake) and the Java code into the APK
-        run: ./gradlew assembleDebug
+        # 'clean' ensures old asset versions (like rootfs.tar) are wiped before the new build
+        run: ./gradlew clean assembleDebug
 
       - name: Upload Finished APK
         uses: actions/upload-artifact@v4
