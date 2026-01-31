@@ -13,28 +13,26 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Prepare Assets (OS & Engine)
+      - name: Prepare Assets
         run: |
-          # 1. Create directory structure in assets
+          # Create the required asset directories
           mkdir -p app/src/main/assets/bin
           
-          # 2. Download the PRoot engine (Android AArch64 build)
-          # Explicitly named 'proot' to match MainActivity.kt
+          # Download PRoot Engine
           curl -L https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64 -o app/src/main/assets/bin/proot
           
-          # 3. Download Alpine Linux Rootfs
-          # This forces the filename to 'rootfs.tar.gz' regardless of the source filename
-          # This solves the "Critical Error" seen in your logs
+          # Download Alpine and FORCE the filename to rootfs.tar.gz
+          # This aligns with the 'assets.open("rootfs.tar.gz")' call in your Kotlin code
           curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o app/src/main/assets/rootfs.tar.gz
           
-          # 4. Verify downloads and names
+          # Verify files are named correctly
           ls -R app/src/main/assets/
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        # 'clean' ensures old asset versions (like rootfs.tar) are wiped before the new build
+        # 'clean' is critical here to wipe any old 'rootfs.tar' files from previous builds
         run: ./gradlew clean assembleDebug
 
       - name: Upload Finished APK
