@@ -1,4 +1,4 @@
-name: Build vPhone Minimal QEMU
+name: Build vPhone with Proot
 
 on: [push]
 
@@ -29,5 +29,5 @@ jobs:
       - name: Upload Finished APK
         uses: actions/upload-artifact@v4
         with:
-          name: vPhone-QEMU-Edition
+          name: vPhone-Proot-Edition
           path: app/build/outputs/apk/debug/app-debug.apk

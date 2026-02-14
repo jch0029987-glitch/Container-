@@ -1,5 +1,6 @@
 package com.vphone.clone
 
+import android.content.res.AssetManager
 import android.os.Bundle
 import android.view.inputmethod.EditorInfo
 import android.widget.*
@@ -16,9 +17,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnToggle: Button
     private var linuxWriter: BufferedWriter? = null
 
-    // URLs for runtime download
-    private val QEMU_URL =
-        "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-aarch64-static"
+    // Runtime download URLs
+    private val PROOT_URL =
+        "https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64"
     private val ROOTFS_URL =
         "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
 
@@ -49,38 +50,35 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
-        // Start optional logcat thread
-        startLogcatThread()
-
-        // Initialize OS: download QEMU + rootfs and boot container
+        // Initialize Proot + Alpine container
         initOS()
     }
 
-    /** Initialize QEMU + Alpine container */
+    /** Initialize Proot + Alpine rootfs */
     private fun initOS() {
         val binDir = File(filesDir, "bin").apply { mkdirs() }
         val rootfsDir = File(filesDir, "rootfs")
-        val qemuBin = File(binDir, "qemu-aarch64")
+        val prootBin = File(binDir, "proot")
         val rootfsTar = File(filesDir, "rootfs.tar.gz")
 
         Thread {
             try {
-                // Download QEMU if missing
-                if (!qemuBin.exists()) {
-                    updateStatus("Downloading QEMU user-mode...")
-                    downloadFile(QEMU_URL, qemuBin)
-                    qemuBin.setExecutable(true)
-                    updateStatus("QEMU downloaded: ${qemuBin.absolutePath}")
+                // 1️⃣ Download Proot if missing
+                if (!prootBin.exists()) {
+                    updateStatus("Downloading Proot for Android...")
+                    downloadFile(PROOT_URL, prootBin)
+                    prootBin.setExecutable(true)
+                    updateStatus("Proot downloaded: ${prootBin.absolutePath}")
                 }
 
-                // Download rootfs if missing
+                // 2️⃣ Download rootfs if missing
                 if (!rootfsTar.exists()) {
-                    updateStatus("Downloading Alpine rootfs (may take a minute)...")
+                    updateStatus("Downloading Alpine rootfs...")
                     downloadFile(ROOTFS_URL, rootfsTar)
                     updateStatus("Rootfs downloaded: ${rootfsTar.absolutePath}")
                 }
 
-                // Extract rootfs if empty
+                // 3️⃣ Extract rootfs if missing
                 if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
                     rootfsDir.mkdirs()
                     updateStatus("Extracting Alpine rootfs...")
@@ -91,8 +89,8 @@ class MainActivity : AppCompatActivity() {
                     updateStatus("Rootfs extracted to: ${rootfsDir.absolutePath}")
                 }
 
-                // Boot the container
-                bootLinux(qemuBin, rootfsDir)
+                // 4️⃣ Launch Alpine via Proot
+                bootLinux(prootBin, rootfsDir)
 
             } catch (e: Exception) {
                 updateStatus("ERROR: ${e.message}")
@@ -100,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Download file from URL */
+    /** Download a file from URL to target location */
     private fun downloadFile(urlString: String, targetFile: File) {
         val url = URL(urlString)
         (url.openConnection() as HttpURLConnection).apply {
@@ -115,11 +113,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Boot Alpine using QEMU user-mode */
-    private fun bootLinux(qemuBin: File, rootfsDir: File) {
+    /** Launch Alpine via Proot */
+    private fun bootLinux(prootBin: File, rootfsDir: File) {
         val cmd = arrayOf(
-            qemuBin.absolutePath,
-            "-L", rootfsDir.absolutePath,
+            prootBin.absolutePath,
+            "-0",                 // root user inside container
+            "-r", rootfsDir.absolutePath,
             "/bin/sh", "-c",
             "echo 'Alpine loaded!' && exec /bin/sh -i"
         )
@@ -133,14 +132,14 @@ class MainActivity : AppCompatActivity() {
             // Capture stderr
             Thread { process.errorStream.bufferedReader().forEachLine { updateStatus("ERR: $it") } }.start()
 
-            updateStatus("Alpine container launched via QEMU")
+            updateStatus("Alpine container launched via Proot")
 
         } catch (e: Exception) {
             updateStatus("Failed to launch Alpine: ${e.message}")
         }
     }
 
-    /** Execute Linux command in the container */
+    /** Execute Linux command inside container */
     private fun executeLinux(cmd: String) {
         Thread {
             try {
@@ -160,17 +159,5 @@ class MainActivity : AppCompatActivity() {
                 (logView.parent as? ScrollView)?.fullScroll(ScrollView.FOCUS_DOWN)
             }
         }
-    }
-
-    /** Optional: capture Android logcat in-app */
-    private fun startLogcatThread() {
-        Thread {
-            try {
-                val logcat = Runtime.getRuntime().exec("logcat VPhone:D *:S")
-                logcat.inputStream.bufferedReader().forEachLine { updateStatus("[LOGCAT] $it") }
-            } catch (e: Exception) {
-                updateStatus("Logcat thread error: ${e.message}")
-            }
-        }.start()
     }
 }
