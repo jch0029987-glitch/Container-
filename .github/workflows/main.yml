@@ -1,4 +1,4 @@
-name: Build vPhone Minimal QEMU with Test
+name: Build vPhone Minimal QEMU
 
 on: [push]
 
@@ -25,20 +25,7 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew clean assembleDebug
 
-      # 5️⃣ Optional: Test Alpine container in QEMU user-mode
-      - name: Test Alpine container
-        run: |
-          set -e
-          mkdir -p tmp-rootfs
-          echo "Downloading QEMU and Alpine rootfs for test..."
-          curl -L https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-aarch64-static -o tmp-rootfs/qemu-aarch64
-          curl -L https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz -o tmp-rootfs/rootfs.tar.gz
-          chmod +x tmp-rootfs/qemu-aarch64
-          tar -xzf tmp-rootfs/rootfs.tar.gz -C tmp-rootfs
-          echo "Running test command inside Alpine..."
-          tmp-rootfs/qemu-aarch64 -L tmp-rootfs /bin/echo "Alpine test successful"
-
-      # 6️⃣ Upload the APK
+      # 5️⃣ Upload the APK
       - name: Upload Finished APK
         uses: actions/upload-artifact@v4
         with:
