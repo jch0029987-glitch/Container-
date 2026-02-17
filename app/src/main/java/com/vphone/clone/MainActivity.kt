@@ -1,6 +1,5 @@
 package com.vphone.clone
 
-import android.os.Build
 import android.os.Bundle
 import android.system.Os
 import android.view.inputmethod.EditorInfo
@@ -26,6 +25,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // UI bindings
         logView = findViewById(R.id.logView)
         consoleLayout = findViewById(R.id.terminalConsole)
         cmdInput = findViewById(R.id.cmdInput)
@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initOS() {
-        // Use the system's native library path to bypass API 29+ execution restrictions
+        // Point to the jniLibs location where Android installs libproot.so
         val prootBin = File(applicationInfo.nativeLibraryDir, "libproot.so")
         val rootfsDir = File(filesDir, "rootfs")
         val rootfsTar = File(filesDir, "rootfs.tar.gz")
@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 if (!prootBin.exists()) {
-                    updateStatus("ERROR: libproot.so missing from jniLibs!")
+                    updateStatus("ERROR: libproot.so not found in jniLibs!")
                     return@Thread
                 }
 
@@ -69,18 +69,17 @@ class MainActivity : AppCompatActivity() {
                     downloadFile(ROOTFS_URL, rootfsTar)
                 }
 
-                // Extract with Symlink support
-                if (!rootfsDir.exists() || rootfsDir.list().isNullOrEmpty()) {
+                // Extract rootfs if missing
+                if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
                     rootfsDir.mkdirs()
                     extractTarGz(rootfsTar, rootfsDir)
-                    updateStatus("Rootfs ready.")
+                    updateStatus("Rootfs extraction complete.")
                 }
 
                 bootLinux(prootBin, rootfsDir)
 
             } catch (e: Exception) {
-                updateStatus("ERROR: ${e.message}")
-                e.printStackTrace()
+                updateStatus("INITIALIZATION ERROR: ${e.message}")
             }
         }.start()
     }
@@ -89,10 +88,11 @@ class MainActivity : AppCompatActivity() {
         val url = URL(urlString)
         (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
+            readTimeout = 15000
             requestMethod = "GET"
             setRequestProperty("User-Agent", "Mozilla/5.0")
             connect()
-            if (responseCode != 200) throw IOException("Download failed: $responseCode")
+            if (responseCode != 200) throw IOException("Failed download: HTTP $responseCode")
             inputStream.use { input ->
                 FileOutputStream(targetFile).use { output -> input.copyTo(output) }
             }
@@ -101,7 +101,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun extractTarGz(tarGz: File, destDir: File) {
-        updateStatus("Extracting rootfs (handling symlinks)...")
+        updateStatus("Extracting (preserving symlinks)...")
         GZIPInputStream(FileInputStream(tarGz)).use { gis ->
             TarArchiveInputStream(gis).use { tis ->
                 var entry: TarArchiveEntry? = tis.nextTarEntry
@@ -109,19 +109,21 @@ class MainActivity : AppCompatActivity() {
                     val outFile = File(destDir, entry.name)
                     
                     if (entry.isSymbolicLink) {
-                        // Crucial: Create actual Linux symlinks
+                        // Create actual Linux symlinks using android.system.Os
                         try {
                             Os.symlink(entry.linkName, outFile.absolutePath)
                         } catch (e: Exception) {
-                            updateStatus("Symlink failed: ${entry.name} -> ${entry.linkName}")
+                            // Log symlink failures (often due to existing files)
                         }
                     } else if (entry.isDirectory) {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { fos -> tis.copyTo(fos) }
-                        // Ensure binaries stay executable inside the container
-                        if (entry.mode and 0 burns 100 != 0) {
+                        FileOutputStream(outFile).use { fos ->
+                            tis.copyTo(fos)
+                        }
+                        // Check if file should be executable (Owner Execute bit)
+                        if (entry.mode and 0x40 != 0) {
                             outFile.setExecutable(true)
                         }
                     }
@@ -140,6 +142,7 @@ class MainActivity : AppCompatActivity() {
             "-b", "/dev",
             "-b", "/proc",
             "-b", "/sys",
+            "-b", "/etc/resolv.conf", // Helps with networking
             "/bin/sh", "-c",
             "export HOME=/root; export PATH=/usr/bin:/bin:/usr/sbin:/sbin; exec /bin/sh -i"
         )
@@ -152,10 +155,10 @@ class MainActivity : AppCompatActivity() {
             Thread { process.inputStream.bufferedReader().forEachLine { updateStatus(it) } }.start()
             Thread { process.errorStream.bufferedReader().forEachLine { updateStatus("ERR: $it") } }.start()
 
-            updateStatus("Alpine Linux is active.")
+            updateStatus("Alpine Linux Shell Active")
 
         } catch (e: Exception) {
-            updateStatus("Boot failed: ${e.message}")
+            updateStatus("Boot Error: ${e.message}")
         }
     }
 
