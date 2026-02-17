@@ -1,6 +1,5 @@
 package com.vphone.clone
 
-import android.content.res.AssetManager
 import android.os.Bundle
 import android.view.inputmethod.EditorInfo
 import android.widget.*
@@ -8,6 +7,9 @@ import androidx.appcompat.app.AppCompatActivity
 import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.zip.GZIPInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 
 class MainActivity : AppCompatActivity() {
 
@@ -16,12 +18,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cmdInput: EditText
     private lateinit var btnToggle: Button
     private var linuxWriter: BufferedWriter? = null
-
-    // Runtime download URLs
-    private val PROOT_URL =
-        "https://github.com/termux/proot/releases/download/v5.1.107/proot-android-aarch64"
-    private val ROOTFS_URL =
-        "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
+    private var linuxProcess: Process? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,7 +47,7 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
-        // Initialize Proot + Alpine container
+        // Initialize Proot + Alpine
         initOS()
     }
 
@@ -65,28 +62,29 @@ class MainActivity : AppCompatActivity() {
             try {
                 // 1️⃣ Download Proot if missing
                 if (!prootBin.exists()) {
-                    updateStatus("Downloading Proot for Android...")
+                    updateStatus("Downloading Proot...")
+                    val PROOT_URL =
+                        "https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot"
                     downloadFile(PROOT_URL, prootBin)
                     prootBin.setExecutable(true)
-                    updateStatus("Proot downloaded: ${prootBin.absolutePath}")
+                    updateStatus("Proot ready: ${prootBin.absolutePath}")
                 }
 
-                // 2️⃣ Download rootfs if missing
+                // 2️⃣ Download Alpine rootfs if missing
+                val ROOTFS_URL =
+                    "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
                 if (!rootfsTar.exists()) {
                     updateStatus("Downloading Alpine rootfs...")
                     downloadFile(ROOTFS_URL, rootfsTar)
-                    updateStatus("Rootfs downloaded: ${rootfsTar.absolutePath}")
+                    updateStatus("Rootfs downloaded")
                 }
 
                 // 3️⃣ Extract rootfs if missing
                 if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
                     rootfsDir.mkdirs()
-                    updateStatus("Extracting Alpine rootfs...")
-                    val tarProcess = Runtime.getRuntime().exec(
-                        arrayOf("tar", "-xzf", rootfsTar.absolutePath, "-C", rootfsDir.absolutePath)
-                    )
-                    if (tarProcess.waitFor() != 0) throw Exception("Failed to extract rootfs")
-                    updateStatus("Rootfs extracted to: ${rootfsDir.absolutePath}")
+                    updateStatus("Extracting rootfs...")
+                    extractTarGz(rootfsTar, rootfsDir)
+                    updateStatus("Rootfs extracted: ${rootfsDir.absolutePath}")
                 }
 
                 // 4️⃣ Launch Alpine via Proot
@@ -98,14 +96,16 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Download a file from URL to target location */
+    /** Download a file from URL */
     private fun downloadFile(urlString: String, targetFile: File) {
         val url = URL(urlString)
         (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
             readTimeout = 15000
             requestMethod = "GET"
+            setRequestProperty("User-Agent", "Mozilla/5.0")
             connect()
+            if (responseCode != 200) throw IOException("Failed download: HTTP $responseCode")
             inputStream.use { input ->
                 FileOutputStream(targetFile).use { output -> input.copyTo(output) }
             }
@@ -113,19 +113,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Launch Alpine via Proot */
+    /** Extract tar.gz using Apache Commons Compress */
+    private fun extractTarGz(tarGz: File, destDir: File) {
+        updateStatus("Extracting tar.gz (this may take a while)...")
+        GZIPInputStream(FileInputStream(tarGz)).use { gis ->
+            TarArchiveInputStream(gis).use { tis ->
+                var entry: TarArchiveEntry? = tis.nextTarEntry
+                while (entry != null) {
+                    val outFile = File(destDir, entry.name)
+                    if (entry.isDirectory) outFile.mkdirs()
+                    else outFile.apply { parentFile?.mkdirs() }.outputStream().use { fos ->
+                        tis.copyTo(fos)
+                    }
+                    entry = tis.nextTarEntry
+                }
+            }
+        }
+    }
+
+    /** Launch Alpine container via Proot */
     private fun bootLinux(prootBin: File, rootfsDir: File) {
         val cmd = arrayOf(
             prootBin.absolutePath,
-            "-0",                 // root user inside container
+            "--link2symlink",
+            "-0",
             "-r", rootfsDir.absolutePath,
+            "-b", "/dev",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-b", filesDir.absolutePath + ":/root",
             "/bin/sh", "-c",
-            "echo 'Alpine loaded!' && exec /bin/sh -i"
+            "export HOME=/root; export PATH=/usr/bin:/bin:/usr/sbin:/sbin; echo 'Alpine loaded!' && exec /bin/sh -i"
         )
 
         try {
             val process = Runtime.getRuntime().exec(cmd)
             linuxWriter = process.outputStream.bufferedWriter()
+            linuxProcess = process
 
             // Capture stdout
             Thread { process.inputStream.bufferedReader().forEachLine { updateStatus(it) } }.start()
@@ -141,6 +165,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Execute Linux command inside container */
     private fun executeLinux(cmd: String) {
+        updateStatus("> $cmd")
         Thread {
             try {
                 linuxWriter?.write("$cmd\n")
@@ -159,5 +184,10 @@ class MainActivity : AppCompatActivity() {
                 (logView.parent as? ScrollView)?.fullScroll(ScrollView.FOCUS_DOWN)
             }
         }
+    }
+
+    override fun onDestroy() {
+        linuxProcess?.destroy()
+        super.onDestroy()
     }
 }
