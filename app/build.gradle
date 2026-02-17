@@ -14,15 +14,23 @@ android {
         versionCode 1
         versionName "1.0"
 
-        // This allows the C++ compiler to know your app settings
         externalNativeBuild {
             cmake {
                 cppFlags ""
+                // Ensure CMake only tries to build for the architecture you have binaries for
+                abiFilters "arm64-v8a" 
             }
         }
     }
 
-    // This links the CMake script we created in Termux
+    // ADD THIS SECTION:
+    sourceSets {
+        main {
+            // This ensures Gradle picks up the libproot.so you placed in jniLibs
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path "src/main/cpp/CMakeLists.txt"
@@ -34,23 +42,20 @@ android {
             minifyEnabled false
         }
     }
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    
+
     kotlinOptions {
         jvmTarget = '17'
     }
 }
 
 dependencies {
-    // Core Android libraries (Native-only now)
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.10.0'
-implementation 'org.apache.commons:commons-compress:1.23.0'
-    
-    // NOTE: Removed the VNC library here because we are building our own engine in C++
+    implementation 'org.apache.commons:commons-compress:1.23.0'
 }

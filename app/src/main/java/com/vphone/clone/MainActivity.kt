@@ -1,6 +1,8 @@
 package com.vphone.clone
 
+import android.os.Build
 import android.os.Bundle
+import android.system.Os
 import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -24,20 +26,17 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // UI bindings
         logView = findViewById(R.id.logView)
         consoleLayout = findViewById(R.id.terminalConsole)
         cmdInput = findViewById(R.id.cmdInput)
         btnToggle = findViewById(R.id.btnToggle)
 
-        // Toggle console overlay
         btnToggle.setOnClickListener {
             consoleLayout.visibility =
                 if (consoleLayout.visibility == LinearLayout.VISIBLE) LinearLayout.GONE
                 else LinearLayout.VISIBLE
         }
 
-        // Send commands on IME action
         cmdInput.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 val cmd = (v as EditText).text.toString()
@@ -47,65 +46,53 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
-        // Initialize Proot + Alpine
         initOS()
     }
 
-    /** Initialize Proot + Alpine rootfs */
     private fun initOS() {
-        val binDir = File(filesDir, "bin").apply { mkdirs() }
+        // Use the system's native library path to bypass API 29+ execution restrictions
+        val prootBin = File(applicationInfo.nativeLibraryDir, "libproot.so")
         val rootfsDir = File(filesDir, "rootfs")
-        val prootBin = File(binDir, "proot")
         val rootfsTar = File(filesDir, "rootfs.tar.gz")
 
         Thread {
             try {
-                // 1️⃣ Download Proot if missing
                 if (!prootBin.exists()) {
-                    updateStatus("Downloading Proot...")
-                    val PROOT_URL =
-                        "https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot"
-                    downloadFile(PROOT_URL, prootBin)
-                    prootBin.setExecutable(true)
-                    updateStatus("Proot ready: ${prootBin.absolutePath}")
+                    updateStatus("ERROR: libproot.so missing from jniLibs!")
+                    return@Thread
                 }
 
-                // 2️⃣ Download Alpine rootfs if missing
-                val ROOTFS_URL =
-                    "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
+                // Download Alpine rootfs if missing
+                val ROOTFS_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
                 if (!rootfsTar.exists()) {
                     updateStatus("Downloading Alpine rootfs...")
                     downloadFile(ROOTFS_URL, rootfsTar)
-                    updateStatus("Rootfs downloaded")
                 }
 
-                // 3️⃣ Extract rootfs if missing
-                if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
+                // Extract with Symlink support
+                if (!rootfsDir.exists() || rootfsDir.list().isNullOrEmpty()) {
                     rootfsDir.mkdirs()
-                    updateStatus("Extracting rootfs...")
                     extractTarGz(rootfsTar, rootfsDir)
-                    updateStatus("Rootfs extracted: ${rootfsDir.absolutePath}")
+                    updateStatus("Rootfs ready.")
                 }
 
-                // 4️⃣ Launch Alpine via Proot
                 bootLinux(prootBin, rootfsDir)
 
             } catch (e: Exception) {
                 updateStatus("ERROR: ${e.message}")
+                e.printStackTrace()
             }
         }.start()
     }
 
-    /** Download a file from URL */
     private fun downloadFile(urlString: String, targetFile: File) {
         val url = URL(urlString)
         (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
-            readTimeout = 15000
             requestMethod = "GET"
             setRequestProperty("User-Agent", "Mozilla/5.0")
             connect()
-            if (responseCode != 200) throw IOException("Failed download: HTTP $responseCode")
+            if (responseCode != 200) throw IOException("Download failed: $responseCode")
             inputStream.use { input ->
                 FileOutputStream(targetFile).use { output -> input.copyTo(output) }
             }
@@ -113,17 +100,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Extract tar.gz using Apache Commons Compress */
     private fun extractTarGz(tarGz: File, destDir: File) {
-        updateStatus("Extracting tar.gz (this may take a while)...")
+        updateStatus("Extracting rootfs (handling symlinks)...")
         GZIPInputStream(FileInputStream(tarGz)).use { gis ->
             TarArchiveInputStream(gis).use { tis ->
                 var entry: TarArchiveEntry? = tis.nextTarEntry
                 while (entry != null) {
                     val outFile = File(destDir, entry.name)
-                    if (entry.isDirectory) outFile.mkdirs()
-                    else outFile.apply { parentFile?.mkdirs() }.outputStream().use { fos ->
-                        tis.copyTo(fos)
+                    
+                    if (entry.isSymbolicLink) {
+                        // Crucial: Create actual Linux symlinks
+                        try {
+                            Os.symlink(entry.linkName, outFile.absolutePath)
+                        } catch (e: Exception) {
+                            updateStatus("Symlink failed: ${entry.name} -> ${entry.linkName}")
+                        }
+                    } else if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { fos -> tis.copyTo(fos) }
+                        // Ensure binaries stay executable inside the container
+                        if (entry.mode and 0 burns 100 != 0) {
+                            outFile.setExecutable(true)
+                        }
                     }
                     entry = tis.nextTarEntry
                 }
@@ -131,7 +131,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Launch Alpine container via Proot */
     private fun bootLinux(prootBin: File, rootfsDir: File) {
         val cmd = arrayOf(
             prootBin.absolutePath,
@@ -141,9 +140,8 @@ class MainActivity : AppCompatActivity() {
             "-b", "/dev",
             "-b", "/proc",
             "-b", "/sys",
-            "-b", filesDir.absolutePath + ":/root",
             "/bin/sh", "-c",
-            "export HOME=/root; export PATH=/usr/bin:/bin:/usr/sbin:/sbin; echo 'Alpine loaded!' && exec /bin/sh -i"
+            "export HOME=/root; export PATH=/usr/bin:/bin:/usr/sbin:/sbin; exec /bin/sh -i"
         )
 
         try {
@@ -151,19 +149,16 @@ class MainActivity : AppCompatActivity() {
             linuxWriter = process.outputStream.bufferedWriter()
             linuxProcess = process
 
-            // Capture stdout
             Thread { process.inputStream.bufferedReader().forEachLine { updateStatus(it) } }.start()
-            // Capture stderr
             Thread { process.errorStream.bufferedReader().forEachLine { updateStatus("ERR: $it") } }.start()
 
-            updateStatus("Alpine container launched via Proot")
+            updateStatus("Alpine Linux is active.")
 
         } catch (e: Exception) {
-            updateStatus("Failed to launch Alpine: ${e.message}")
+            updateStatus("Boot failed: ${e.message}")
         }
     }
 
-    /** Execute Linux command inside container */
     private fun executeLinux(cmd: String) {
         updateStatus("> $cmd")
         Thread {
@@ -176,7 +171,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Append text to TextView and scroll */
     private fun updateStatus(text: String) {
         runOnUiThread {
             logView.append("\n$text")
