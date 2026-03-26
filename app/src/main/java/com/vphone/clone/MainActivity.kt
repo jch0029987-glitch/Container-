@@ -1,46 +1,53 @@
 package com.vphone.clone
 
 import android.os.Bundle
-import android.system.Os
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import java.io.*
-import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.GZIPInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private lateinit var logView: TextView
-    private lateinit var consoleLayout: LinearLayout
     private lateinit var cmdInput: EditText
-    private lateinit var btnToggle: Button
+    private lateinit var surfaceView: SurfaceView
+    
     private var linuxWriter: BufferedWriter? = null
     private var linuxProcess: Process? = null
+    private var isRendering = false
+
+    companion object {
+        init {
+            // Load your custom JNI rendering library
+            System.loadLibrary("vphone_clone")
+        }
+    }
+
+    // JNI methods from your C code
+    private external fun renderFrame(surface: Surface, fbPath: String)
+    private external fun sendTouchEvent(x: Int, y: Int, action: Int)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // UI bindings
         logView = findViewById(R.id.logView)
-        consoleLayout = findViewById(R.id.terminalConsole)
         cmdInput = findViewById(R.id.cmdInput)
-        btnToggle = findViewById(R.id.btnToggle)
-
-        btnToggle.setOnClickListener {
-            consoleLayout.visibility =
-                if (consoleLayout.visibility == LinearLayout.VISIBLE) LinearLayout.GONE
-                else LinearLayout.VISIBLE
-        }
+        surfaceView = findViewById(R.id.linuxSurface)
+        
+        surfaceView.holder.addCallback(this)
 
         cmdInput.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
-                val cmd = (v as EditText).text.toString()
-                executeLinux(cmd)
+                executeLinux((v as EditText).text.toString())
                 v.setText("")
                 true
             } else false
@@ -50,141 +57,140 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initOS() {
-        // Point to the jniLibs location where Android installs libproot.so
-        val prootBin = File(applicationInfo.nativeLibraryDir, "libproot.so")
+        // This points to /data/app/~~.../lib/arm64 (or x86_64)
+        // Android automatically extracts libproot.so here during install
+        val libDir = applicationInfo.nativeLibraryDir
+        val prootBin = File(libDir, "libproot.so")
+        
         val rootfsDir = File(filesDir, "rootfs")
         val rootfsTar = File(filesDir, "rootfs.tar.gz")
 
         Thread {
             try {
+                // 1. Verify PRoot exists
                 if (!prootBin.exists()) {
-                    updateStatus("ERROR: libproot.so not found in jniLibs!")
+                    updateStatus("ERROR: libproot.so not found at: ${prootBin.absolutePath}")
+                    // List files in lib dir for debugging
+                    val files = File(libDir).list()?.joinToString(", ")
+                    updateStatus("Available libs: $files")
                     return@Thread
                 }
 
-                // Download Alpine rootfs if missing
-                val ROOTFS_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz"
-                if (!rootfsTar.exists()) {
-                    updateStatus("Downloading Alpine rootfs...")
-                    downloadFile(ROOTFS_URL, rootfsTar)
-                }
-
-                // Extract rootfs if missing
-                if (!rootfsDir.exists() || rootfsDir.list()?.isEmpty() == true) {
-                    rootfsDir.mkdirs()
+                // 2. Handle Rootfs
+                if (!rootfsDir.exists() || rootfsDir.list().isNullOrEmpty()) {
+                    if (!rootfsTar.exists()) {
+                        updateStatus("Downloading Alpine...")
+                        downloadFile("https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz", rootfsTar)
+                    }
+                    updateStatus("Extracting Rootfs...")
                     extractTarGz(rootfsTar, rootfsDir)
-                    updateStatus("Rootfs extraction complete.")
                 }
 
+                updateStatus("Starting Linux Environment...")
                 bootLinux(prootBin, rootfsDir)
 
             } catch (e: Exception) {
-                updateStatus("INITIALIZATION ERROR: ${e.message}")
+                updateStatus("Init Error: ${e.localizedMessage}")
             }
         }.start()
     }
 
-    private fun downloadFile(urlString: String, targetFile: File) {
-        val url = URL(urlString)
-        (url.openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15000
-            readTimeout = 15000
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "Mozilla/5.0")
-            connect()
-            if (responseCode != 200) throw IOException("Failed download: HTTP $responseCode")
-            inputStream.use { input ->
-                FileOutputStream(targetFile).use { output -> input.copyTo(output) }
-            }
-            disconnect()
-        }
-    }
-
-    private fun extractTarGz(tarGz: File, destDir: File) {
-        updateStatus("Extracting (preserving symlinks)...")
-        GZIPInputStream(FileInputStream(tarGz)).use { gis ->
-            TarArchiveInputStream(gis).use { tis ->
-                var entry: TarArchiveEntry? = tis.nextTarEntry
-                while (entry != null) {
-                    val outFile = File(destDir, entry.name)
-                    
-                    if (entry.isSymbolicLink) {
-                        // Create actual Linux symlinks using android.system.Os
-                        try {
-                            Os.symlink(entry.linkName, outFile.absolutePath)
-                        } catch (e: Exception) {
-                            // Log symlink failures (often due to existing files)
-                        }
-                    } else if (entry.isDirectory) {
-                        outFile.mkdirs()
-                    } else {
-                        outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { fos ->
-                            tis.copyTo(fos)
-                        }
-                        // Check if file should be executable (Owner Execute bit)
-                        if (entry.mode and 0x40 != 0) {
-                            outFile.setExecutable(true)
-                        }
-                    }
-                    entry = tis.nextTarEntry
-                }
-            }
-        }
-    }
-
     private fun bootLinux(prootBin: File, rootfsDir: File) {
+        // Essential environment variables for PRoot and Alpine
+        val env = arrayOf(
+            "TERM=xterm-256color",
+            "HOME=/root",
+            "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+            "LD_LIBRARY_PATH=${applicationInfo.nativeLibraryDir}"
+        )
+
+        // The command must use the absolute path to libproot.so
         val cmd = arrayOf(
             prootBin.absolutePath,
-            "--link2symlink",
-            "-0",
+            "-0",                     // Fake root (rootless)
             "-r", rootfsDir.absolutePath,
             "-b", "/dev",
             "-b", "/proc",
             "-b", "/sys",
-            "-b", "/etc/resolv.conf", // Helps with networking
-            "/bin/sh", "-c",
-            "export HOME=/root; export PATH=/usr/bin:/bin:/usr/sbin:/sbin; exec /bin/sh -i"
+            "-w", "/root",            // Set working directory
+            "/bin/sh", "-i"
         )
 
         try {
-            val process = Runtime.getRuntime().exec(cmd)
-            linuxWriter = process.outputStream.bufferedWriter()
-            linuxProcess = process
+            linuxProcess = Runtime.getRuntime().exec(cmd, env, rootfsDir)
+            linuxWriter = linuxProcess?.outputStream?.bufferedWriter()
 
-            Thread { process.inputStream.bufferedReader().forEachLine { updateStatus(it) } }.start()
-            Thread { process.errorStream.bufferedReader().forEachLine { updateStatus("ERR: $it") } }.start()
+            // Handle output and error streams
+            Thread { linuxProcess?.inputStream?.bufferedReader()?.forEachLine { updateStatus(it) } }.start()
+            Thread { linuxProcess?.errorStream?.bufferedReader()?.forEachLine { updateStatus("ERR: $it") } }.start()
 
-            updateStatus("Alpine Linux Shell Active")
+            updateStatus("Alpine Shell Active")
+            
+            // Optional: Start Xvfb if you've installed it in the rootfs
+            // executeLinux("Xvfb :1 -screen 0 1080x1920x24 -fbdir /tmp &")
 
         } catch (e: Exception) {
-            updateStatus("Boot Error: ${e.message}")
+            updateStatus("Boot Failed: ${e.message}")
         }
     }
 
-    private fun executeLinux(cmd: String) {
-        updateStatus("> $cmd")
+    // --- Rendering Loop ---
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        isRendering = true
+        // Path to the framebuffer file created by Xvfb inside Alpine
+        val fbPath = File(filesDir, "rootfs/tmp/Xvfb_screen0").absolutePath
+        
         Thread {
-            try {
-                linuxWriter?.write("$cmd\n")
-                linuxWriter?.flush()
-            } catch (e: Exception) {
-                updateStatus("Shell error: ${e.message}")
+            while (isRendering) {
+                if (File(fbPath).exists()) {
+                    renderFrame(holder.surface, fbPath)
+                }
+                Thread.sleep(32) // Aim for ~30 FPS
             }
         }.start()
     }
 
+    override fun surfaceDestroyed(holder: SurfaceHolder) { isRendering = false }
+    override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, h2: Int) {}
+
+    // --- Helpers ---
+    private fun executeLinux(cmd: String) {
+        Thread {
+            try {
+                linuxWriter?.write("$cmd\n")
+                linuxWriter?.flush()
+            } catch (e: Exception) { e.printStackTrace() }
+        }.start()
+    }
+
     private fun updateStatus(text: String) {
-        runOnUiThread {
+        runOnUiThread { 
             logView.append("\n$text")
             (logView.parent as? ScrollView)?.post {
-                (logView.parent as? ScrollView)?.fullScroll(ScrollView.FOCUS_DOWN)
+                (logView.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN)
             }
         }
     }
 
-    override fun onDestroy() {
-        linuxProcess?.destroy()
-        super.onDestroy()
+    private fun downloadFile(url: String, target: File) {
+        URL(url).openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+    }
+
+    private fun extractTarGz(tarGz: File, dest: File) {
+        dest.mkdirs()
+        GZIPInputStream(FileInputStream(tarGz)).use { gis ->
+            TarArchiveInputStream(gis).use { tis ->
+                var entry: TarArchiveEntry?
+                while (tis.nextTarEntry.also { entry = it } != null) {
+                    val outFile = File(dest, entry!!.name)
+                    if (entry!!.isDirectory) outFile.mkdirs()
+                    else {
+                        outFile.parentFile?.mkdirs()
+                        tis.copyTo(outFile.outputStream())
+                        if (entry!!.mode and 0x40 != 0) outFile.setExecutable(true, false)
+                    }
+                }
+            }
+        }
     }
 }
